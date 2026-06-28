@@ -101,7 +101,7 @@ static void getSobelKernels( OutputArray _kx, OutputArray _ky,
 
     if( _ksize % 2 == 0 || _ksize > 31 )
         CV_Error( cv::Error::StsOutOfRange, "The kernel size must be odd and not larger than 31" );
-    std::vector<int> kerI(std::max(ksizeX, ksizeY) + 1);
+    AutoBuffer<int> kerI(std::max(ksizeX, ksizeY) + 1);
 
     CV_Assert( dx >= 0 && dy >= 0 && dx+dy > 0 );
 
@@ -182,7 +182,7 @@ cv::Ptr<cv::FilterEngine> cv::createDerivFilter(int srcType, int dstType,
 }
 
 
-#if 0 //defined HAVE_IPP
+#if defined HAVE_IPP
 namespace cv
 {
 
@@ -238,17 +238,22 @@ static bool ipp_Deriv(InputArray _src, OutputArray _dst, int dx, int dy, int ksi
         if(!ippBorder)
             return false;
 
+        // IPP path for 8u->32f does an extra full-image conversion pass, OpenCV's fused sepFilter2D is better
+        if(srcType == ipp8u && dstType == ipp32f)
+            return false;
+
+        // IPP could optimize more for 16s->32f (extra conversion overhead)
+        if(srcType == ipp16s && dstType == ipp32f)
+            return false;
+
+        // IPP extra iwiScale pass for 32f output with scale/delta could be better than OpenCV's fused approach
+        if(useScale && dstType == ipp32f)
+            return false;
+
         if(srcType == ipp8u && dstType == ipp8u)
         {
             iwDstProc.Alloc(iwDst.m_size, ipp16s, channels);
             useScale = true;
-        }
-        else if(srcType == ipp8u && dstType == ipp32f)
-        {
-            iwSrc -= borderSize;
-            iwSrcProc.Alloc(iwSrc.m_size, ipp32f, channels);
-            CV_INSTRUMENT_FUN_IPP(::ipp::iwiScale, iwSrc, iwSrcProc, 1, 0, ::ipp::IwiScaleParams(ippAlgHintFast));
-            iwSrcProc += borderSize;
         }
 
         if(useScharr)
@@ -378,7 +383,7 @@ void cv::Sobel( InputArray _src, OutputArray _dst, int ddepth, int dx, int dy,
     CALL_HAL(sobel, cv_hal_sobel, src.ptr(), src.step, dst.ptr(), dst.step, src.cols, src.rows, sdepth, ddepth, cn,
              ofs.x, ofs.y, wsz.width - src.cols - ofs.x, wsz.height - src.rows - ofs.y, dx, dy, ksize, scale, delta, borderType&~BORDER_ISOLATED);
 
-    //CV_IPP_RUN_FAST(ipp_Deriv(src, dst, dx, dy, ksize, scale, delta, borderType));
+    CV_IPP_RUN_FAST(ipp_Deriv(src, dst, dx, dy, ksize, scale, delta, borderType));
 
     sepFilter2D(src, dst, ddepth, kx, ky, Point(-1, -1), delta, borderType );
 }
@@ -430,7 +435,7 @@ void cv::Scharr( InputArray _src, OutputArray _dst, int ddepth, int dx, int dy,
     CALL_HAL(scharr, cv_hal_scharr, src.ptr(), src.step, dst.ptr(), dst.step, src.cols, src.rows, sdepth, ddepth, cn,
              ofs.x, ofs.y, wsz.width - src.cols - ofs.x, wsz.height - src.rows - ofs.y, dx, dy, scale, delta, borderType&~BORDER_ISOLATED);
 
-    //CV_IPP_RUN_FAST(ipp_Deriv(src, dst, dx, dy, 0, scale, delta, borderType));
+    CV_IPP_RUN_FAST(ipp_Deriv(src, dst, dx, dy, 0, scale, delta, borderType));
 
     sepFilter2D( src, dst, ddepth, kx, ky, Point(-1, -1), delta, borderType );
 }
@@ -715,15 +720,30 @@ void cv::Laplacian( InputArray _src, OutputArray _dst, int ddepth, int ksize,
         ddepth = sdepth;
     _dst.create( _src.size(), CV_MAKETYPE(ddepth, cn) );
 
+    int ktype = std::max(CV_32F, std::max(ddepth, sdepth));
+    Mat kernel;
+
     if( ksize == 1 || ksize == 3 )
     {
-        float K[2][9] =
+        static const double K[2][9] =
         {
             { 0, 1, 0, 1, -4, 1, 0, 1, 0 },
             { 2, 0, 2, 0, -8, 0, 2, 0, 2 }
         };
 
-        Mat kernel(3, 3, CV_32F, K[ksize == 3]);
+        kernel.create(3, 3, ktype);
+        if (ktype == CV_32F)
+        {
+            float* kptr = kernel.ptr<float>();
+            for (int i = 0; i < 9; ++i)
+                kptr[i] = static_cast<float>(K[ksize == 3][i]);
+        }
+        else
+        {
+            double* kptr = kernel.ptr<double>();
+            for (int i = 0; i < 9; ++i)
+                kptr[i] = K[ksize == 3][i];
+        }
         if( scale != 1 )
             kernel *= scale;
 
@@ -735,20 +755,26 @@ void cv::Laplacian( InputArray _src, OutputArray _dst, int ddepth, int ksize,
 
     if( ksize == 1 || ksize == 3 )
     {
-        float K[2][9] =
-        {
-            { 0, 1, 0, 1, -4, 1, 0, 1, 0 },
-            { 2, 0, 2, 0, -8, 0, 2, 0, 2 }
-        };
-        Mat kernel(3, 3, CV_32F, K[ksize == 3]);
-        if( scale != 1 )
-            kernel *= scale;
+        Mat src = _src.getMat();
+        Mat dst = _dst.getMat();
+
+        Point ofs;
+        Size wsz(src.cols, src.rows);
+        if(!(borderType & BORDER_ISOLATED))
+            src.locateROI(wsz, ofs);
+
+        CALL_HAL(laplacian, cv_hal_laplacian,
+                src.ptr(), src.step,
+                dst.ptr(), dst.step,
+                src.cols, src.rows,
+                sdepth, ddepth, cn,
+                ksize, borderType & ~BORDER_ISOLATED,
+                (uint8_t)0);
 
         filter2D( _src, _dst, ddepth, kernel, Point(-1, -1), delta, borderType );
     }
     else
     {
-        int ktype = std::max(CV_32F, std::max(ddepth, sdepth));
         int wdepth = sdepth == CV_8U && ksize <= 5 ? CV_16S : sdepth <= CV_32F ? CV_32F : CV_64F;
         int wtype = CV_MAKETYPE(wdepth, cn);
         Mat kd, ks;

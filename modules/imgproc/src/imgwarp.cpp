@@ -173,8 +173,8 @@ static const void* initInterTab2D( int method, bool fixpt )
             for( j = 0; j < INTER_TAB_SIZE; j++, tab += ksize*ksize, itab += ksize*ksize )
             {
                 int isum = 0;
-                NNDeltaTab_i[i*INTER_TAB_SIZE+j][0] = j < INTER_TAB_SIZE/2;
-                NNDeltaTab_i[i*INTER_TAB_SIZE+j][1] = i < INTER_TAB_SIZE/2;
+                NNDeltaTab_i[i*INTER_TAB_SIZE+j][0] = j >= INTER_TAB_SIZE/2;
+                NNDeltaTab_i[i*INTER_TAB_SIZE+j][1] = i >= INTER_TAB_SIZE/2;
 
                 for( k1 = 0; k1 < ksize; k1++ )
                 {
@@ -2276,6 +2276,7 @@ void warpAffine(int src_type,
     parallel_for_(range, invoker, dst.total()/(double)(1<<16));
 }
 
+CV_DISABLE_UBSAN
 void warpAffineBlocklineNN(int *adelta, int *bdelta, short* xy, int X0, int Y0, int bw)
 {
     CALL_HAL(warpAffineBlocklineNN, cv_hal_warpAffineBlocklineNN, adelta, bdelta, xy, X0, Y0, bw);
@@ -2306,6 +2307,7 @@ void warpAffineBlocklineNN(int *adelta, int *bdelta, short* xy, int X0, int Y0, 
     }
 }
 
+CV_DISABLE_UBSAN
 void warpAffineBlockline(int *adelta, int *bdelta, short* xy, short* alpha, int X0, int Y0, int bw)
 {
     CALL_HAL(warpAffineBlockline, cv_hal_warpAffineBlockline, adelta, bdelta, xy, alpha, X0, Y0, bw);

@@ -2770,6 +2770,14 @@ TEST(Core_Norm, NORM_L2_8UC4)
     EXPECT_EQ(kNorm, cv::norm(a, b, NORM_L2));
 }
 
+TEST(Core_Norm, NORM_L2SQR_16SC4_large)
+{
+    const int sizes[] = {1, 116, 40};
+    Mat src(3, sizes, CV_16SC4, Scalar::all(16384));
+    const double expected = static_cast<double>(src.total()) * src.channels() * 16384.0 * 16384.0;
+    EXPECT_EQ(expected, cv::norm(src, NORM_L2SQR));
+}
+
 TEST(Core_ConvertTo, regression_12121)
 {
     {
@@ -3410,5 +3418,17 @@ TEST_P(Core_LUT, accuracy_multi2)
 }
 
 INSTANTIATE_TEST_CASE_P(/**/, Core_LUT, testing::Combine( LutIdxType::all(), LutMatType::all()));
+
+TEST(Core_Arithm, mul_overflow_28557)
+{
+    uint16_t data[] = {5000, 60000, 5000, 60000, 5000, 60000};
+    cv::Mat m(1, 6, CV_16U, data);
+    cv::Mat res = m.mul(m);
+
+    for (int i = 0; i < 6; i++)
+    {
+        EXPECT_EQ(65535, res.at<uint16_t>(0, i));
+    }
+}
 
 }} // namespace

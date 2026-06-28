@@ -1,4 +1,4 @@
-/***********************************************************************
+/*M*********************************************************************
  * Software License Agreement (BSD License)
  *
  * Copyright 2008-2011  Marius Muja (mariusm@cs.ubc.ca). All rights reserved.
@@ -686,8 +686,8 @@ private:
             return;
         }
 
-        std::vector<int> centers(branching);
-        std::vector<int> labels(indices_length);
+        cv::AutoBuffer<int> centers(branching);
+        cv::AutoBuffer<int> labels(indices_length);
 
         int centers_length;
         (this->*chooseCenters)(branching, dsindices, indices_length, &centers[0], centers_length);

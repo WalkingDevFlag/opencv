@@ -341,6 +341,20 @@ cv::Mat cv::Mat::cross(InputArray _m) const
 namespace cv
 {
 
+typedef void (*ReduceSumFunc)(const Mat& src, Mat& dst);
+ReduceSumFunc getReduceCSumFunc(int sdepth, int ddepth);
+ReduceSumFunc getReduceRSumFunc(int sdepth, int ddepth);
+
+template <typename T, typename WT, typename Op>
+struct ReduceR_SIMD
+{
+    int operator()(const T*, int start, int, WT*, const Op&) const
+    {
+        return start;
+    }
+};
+
+
 template<typename T, typename ST, typename WT, class Op, class OpInit>
 class ReduceR_Invoker : public ParallelLoopBody
 {
@@ -364,7 +378,8 @@ public:
     for( ; --height; )
     {
         src += srcstep;
-        i = range.start;
+        ReduceR_SIMD<T, WT, Op> simd_op;
+        i = simd_op(src, range.start, range.end, buf, op);
         #if CV_ENABLE_UNROLLED
         for(; i <= range.end - 4; i += 4 )
         {
@@ -806,7 +821,10 @@ void cv::reduce(InputArray _src, OutputArray _dst, int dim, int op, int dtype)
     {
         if( op == REDUCE_SUM )
         {
-            if(sdepth == CV_8U && ddepth == CV_32S)
+            ReduceSumFunc simd_func = getReduceRSumFunc(sdepth, ddepth);
+            if(simd_func)
+                func = (ReduceFunc)simd_func;
+            else if(sdepth == CV_8U && ddepth == CV_32S)
                 func = reduceSumR8u32s;
             else if(sdepth == CV_8U && ddepth == CV_32F)
                 func = reduceSumR8u32f;
@@ -881,7 +899,10 @@ void cv::reduce(InputArray _src, OutputArray _dst, int dim, int op, int dtype)
     {
         if(op == REDUCE_SUM)
         {
-            if(sdepth == CV_8U && ddepth == CV_32S)
+            ReduceSumFunc simd_func = getReduceCSumFunc(sdepth, ddepth);
+            if(simd_func)
+                func = (ReduceFunc)simd_func;
+            else if(sdepth == CV_8U && ddepth == CV_32S)
                 func = reduceSumC8u32s;
             else if(sdepth == CV_8U && ddepth == CV_32F)
                 func = reduceSumC8u32f;
@@ -971,7 +992,6 @@ namespace cv
 
 template<typename T> static void sort_( const Mat& src, Mat& dst, int flags )
 {
-    AutoBuffer<T> buf;
     int n, len;
     bool sortRows = (flags & 1) == SORT_EVERY_ROW;
     bool inplace = src.data == dst.data;
@@ -980,43 +1000,47 @@ template<typename T> static void sort_( const Mat& src, Mat& dst, int flags )
     if( sortRows )
         n = src.rows, len = src.cols;
     else
-    {
         n = src.cols, len = src.rows;
-        buf.allocate(len);
-    }
-    T* bptr = buf.data();
-
-    for( int i = 0; i < n; i++ )
+    parallel_for_(Range(0, n), [&](const Range& range)
     {
-        T* ptr = bptr;
-        if( sortRows )
-        {
-            T* dptr = dst.ptr<T>(i);
-            if( !inplace )
-            {
-                const T* sptr = src.ptr<T>(i);
-                memcpy(dptr, sptr, sizeof(T) * len);
-            }
-            ptr = dptr;
-        }
-        else
-        {
-            for( int j = 0; j < len; j++ )
-                ptr[j] = src.ptr<T>(j)[i];
-        }
-
-        std::sort( ptr, ptr + len );
-        if( sortDescending )
-        {
-            for( int j = 0; j < len/2; j++ )
-                std::swap(ptr[j], ptr[len-1-j]);
-        }
-
+        AutoBuffer<T> buf;
         if( !sortRows )
-            for( int j = 0; j < len; j++ )
-                dst.ptr<T>(j)[i] = ptr[j];
-    }
+            buf.allocate(len);
+        T* bptr = buf.data();
+
+        for( int i = range.start; i < range.end; i++ )
+        {
+            T* ptr = bptr;
+            if( sortRows )
+            {
+                T* dptr = dst.ptr<T>(i);
+                if( !inplace )
+                {
+                    const T* sptr = src.ptr<T>(i);
+                    memcpy(dptr, sptr, sizeof(T) * len);
+                }
+                ptr = dptr;
+            }
+            else
+            {
+                for( int j = 0; j < len; j++ )
+                    ptr[j] = src.ptr<T>(j)[i];
+            }
+
+            std::sort( ptr, ptr + len );
+            if( sortDescending )
+            {
+                for( int j = 0; j < len/2; j++ )
+                    std::swap(ptr[j], ptr[len-1-j]);
+            }
+
+            if( !sortRows )
+                for( int j = 0; j < len; j++ )
+                    dst.ptr<T>(j)[i] = ptr[j];
+        }
+    });
 }
+
 
 #ifdef HAVE_IPP
 typedef IppStatus (CV_STDCALL *IppSortFunc)(void  *pSrcDst, int    len, Ipp8u *pBuffer);

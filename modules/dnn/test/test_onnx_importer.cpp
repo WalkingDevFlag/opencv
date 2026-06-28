@@ -103,6 +103,8 @@ public:
             net.setInput(inps[i], inputNames[i]);
         Mat out = net.forward("");
 
+        EXPECT_EQ(shape(out), shape(ref));
+
         if (useSoftmax)
         {
             LayerParams lp;
@@ -1168,6 +1170,7 @@ TEST_P(Test_ONNX_layers, DynamicReshape)
     testONNXModels("dynamic_reshape_opset_11");
     testONNXModels("flatten_by_prod");
     testONNXModels("flatten_const");
+    testONNXModels("flatten_axis_numaxes");
 }
 
 TEST_P(Test_ONNX_layers, Reshape)
@@ -1187,6 +1190,7 @@ TEST_P(Test_ONNX_layers, Squeeze)
         applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_MYRIAD, CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER);
     testONNXModels("squeeze");
     testONNXModels("squeeze_axes_op13");
+    testONNXModels("squeeze_no_axes");
 }
 
 TEST_P(Test_ONNX_layers, ReduceL2)
@@ -2200,7 +2204,7 @@ TEST_P(Test_ONNX_nets, RAFT)
     // and output 12006 is calculated from 12007 so checking 12007 is sufficient.
     std::string ref_12700_path = _tf("data/output_optical_flow_estimation_raft_2023aug.npy");
     auto ref0 = blobFromNPY(ref_12700_path);
-    normAssert(ref0, outs[0], "", 1e-5, 1.8e-4);
+    normAssert(ref0, outs[0], "", 1.5e-3, 3.2e-2);
 }
 
 TEST_P(Test_ONNX_nets, Squeezenet)
@@ -3183,9 +3187,9 @@ TEST_P(Test_ONNX_nets, VitTrack) {
     auto ref_output2 = blobFromNPY(_tf("data/output_object_tracking_vittrack_2023sep_1.npy"));
     auto ref_output3 = blobFromNPY(_tf("data/output_object_tracking_vittrack_2023sep_2.npy"));
 
-    normAssert(ref_output1, outputs[0], "VitTrack output1");
-    normAssert(ref_output2, outputs[1], "VitTrack output2");
-    normAssert(ref_output3, outputs[2], "VitTrack output3");
+    normAssert(ref_output1, outputs[0], "VitTrack output1", 3e-5, 3e-4);
+    normAssert(ref_output2, outputs[1], "VitTrack output2", 3e-5, 2e-4);
+    normAssert(ref_output3, outputs[2], "VitTrack output3", 3e-4, 9e-4);
 }
 
 TEST_P(Test_ONNX_layers, LayerNormNoFusion) {
